@@ -32,56 +32,52 @@ This solution utilizes AWS Route 53 as the traffic control plane, integrating Cl
 - **Fine-grained Control**: Retain independent manual failback capability for Global/South America
 
 **Architecture Diagram:**
-```
+
+```mermaid
 graph TD
     UserGlobal[Global Users]
     UserSA[South America Users]
 
-    subgraph "DNS Traffic Flow"
-        R53_Entry{api.cloudfront.lab.zzhe.xyz} -->|Default| R53_Alias_Global[Layer 2: Global]
-        R53_Entry -->|South America| R53_Alias_SA[Layer 2: South America]
+    UserGlobal --> R53_Entry
+    UserSA --> R53_Entry
 
-        R53_Alias_Global -->|Primary| CF_G[Cloudflare]
-        R53_Alias_Global -->|Secondary| AWS_G[CloudFront]
+    subgraph DNS["DNS Traffic Flow"]
+        R53_Entry["api.cloudfront.lab.zzhe.xyz"] -->|Default| R53_Global["Layer 2: Global"]
+        R53_Entry -->|South America| R53_SA["Layer 2: South America"]
 
-        R53_Alias_SA -->|Primary| CF_SA[Cloudflare]
-        R53_Alias_SA -->|Secondary| AWS_SA[CloudFront]
+        R53_Global -->|Primary| CF_G[Cloudflare Global]
+        R53_Global -->|Secondary| AWS_G[CloudFront Global]
+
+        R53_SA -->|Primary| CF_SA[Cloudflare SA]
+        R53_SA -->|Secondary| AWS_SA[CloudFront SA]
     end
 
-    subgraph "Monitoring & Control Plane"
-        direction TB
+    subgraph Monitor["Monitoring & Control Plane"]
+        CW_Canary["CloudWatch Synthetics<br/>External Testing"] -->|Fail| Alarm_AWS["Alarm: Canary Fail"]
 
-        %% Signal Source A: AWS Side
-        CW_Canary[CW Synthetics\nExternal Testing] -->|Fail| Alarm_AWS[Alarm: Canary Fail]
+        User_Sys["User Monitoring<br/>Prometheus/Zabbix"] -->|API Push| CW_Metric["CloudWatch Custom Metric<br/>App 5xx Rate"]
+        CW_Metric -->|Threshold| Alarm_User["Alarm: App Metric High"]
 
-        %% Signal Source B: User Side
-        User_Sys[User-built Monitoring\nPrometheus/Zabbix] -->|API Push| CW_Metric[CW Custom Metric\nApp 5xx Rate]
-        CW_Metric -->|Threshold| Alarm_User[Alarm: App Metric High]
-
-        %% Signal Aggregation
-        Alarm_AWS --> Composite_Alarm{Composite Alarm\n(OR Logic)}
+        Alarm_AWS --> Composite_Alarm["Composite Alarm<br/>(OR Logic)"]
         Alarm_User --> Composite_Alarm
 
-        %% Final Control Signal
-        Composite_Alarm --> HC_Auto[HC-Auto: Automatic Fault Signal]
+        Composite_Alarm --> HC_Auto["HC-Auto: Automatic Fault Signal"]
 
-        %% ARC Manual Switch
-        ARC_Global[ARC Switch: Global]
-        ARC_SA[ARC Switch: South America]
+        ARC_Global["ARC Switch: Global"]
+        ARC_SA["ARC Switch: South America"]
     end
 
-    subgraph "Logic Calculation"
-        HC_Auto --> Calc_G{AND}
+    subgraph Logic["Health Check Logic"]
+        HC_Auto --> Calc_G["AND Gate Global"]
         ARC_Global --> Calc_G
 
-        HC_Auto --> Calc_SA{AND}
+        HC_Auto --> Calc_SA["AND Gate SA"]
         ARC_Global --> Calc_SA
         ARC_SA --> Calc_SA
     end
 
-    %% Associations
-    Calc_G -.->|Health Check| CF_G
-    Calc_SA -.->|Health Check| CF_SA
+    Calc_G -.->|Controls Health| CF_G
+    Calc_SA -.->|Controls Health| CF_SA
 ```
 
 ### 2. Detailed Configuration Steps
