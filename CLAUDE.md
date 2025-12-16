@@ -67,9 +67,10 @@ pulumi destroy
 ## Development Workflow
 
 1. Deploy infrastructure first to get the ALB URLs (*.cloudfront.lab.zzhe.xyz)
-2. Configure the client app with the URLs from Pulumi output
-3. Start the client application
-4. Use simulation scripts to test failover scenarios
+2. Configure layered DNS records using the detailed step-by-step guide in README.md (Phase 3)
+3. Configure the client app with the URLs from Pulumi output
+4. Start the client application
+5. Use simulation scripts to test failover scenarios
 
 ## Cost Considerations
 

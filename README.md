@@ -170,13 +170,170 @@ Update basic signal definition, using composite alarm as automatic signal source
 - HC-Logic-Global (AND): HC-Auto + HC-Switch-Global
 - HC-Logic-SA (AND): HC-Auto + HC-Switch-Global + HC-Switch-SA
 
-**Phase 3: Configure Layered DNS Records (Maintain V2.0 Structure)**
+**Phase 3: Configure Layered DNS Records - Manual Step-by-Step Guide**
 
-Structure needs no changes, only ensure Layer 2 Primary Records reference updated Calculated Health Checks.
+This phase sets up the two-layer DNS routing structure that enables geographic-based CDN selection with automatic failover.
 
-(Brief Review)
-- Layer 1 (Entry): api.cloudfront.lab.zzhe.xyz uses Geolocation pointing to sa-rule or global-rule
-- Layer 2 (Rules): sa-rule and global-rule use Failover strategy, Primary points to Cloudflare, Secondary points to CloudFront
+**Overview of DNS Layers:**
+- **Layer 1 (Entry Point)**: Geographic routing that directs users to appropriate regional rules
+- **Layer 2 (Regional Rules)**: Failover logic within each geographic region
+
+### Step-by-Step DNS Configuration
+
+#### Prerequisites
+- Route 53 hosted zone for `cloudfront.lab.zzhe.xyz`
+- Health checks created from Phase 2: HC-Logic-Global and HC-Logic-SA
+- CDN endpoints ready: Cloudflare and CloudFront configurations
+
+---
+
+#### **Step 1: Create Layer 2 Records (Regional Failover Rules)**
+
+**1.1 Create Global Region Failover Records**
+
+Navigate to Route 53 Console → Hosted Zones → `cloudfront.lab.zzhe.xyz`
+
+**Record 1: Global Primary (Cloudflare)**
+- **Record Name**: `global-rule.cloudfront.lab.zzhe.xyz`
+- **Record Type**: `CNAME` or `A` (depending on your Cloudflare setup)
+- **Alias**: No (if using CNAME) / Yes (if using A record with alias)
+- **Value**: `your-cloudflare-cname.example.com` (or Cloudflare IP)
+- **Routing Policy**: `Failover`
+- **Failover Type**: `Primary`
+- **Health Check**: Select `HC-Logic-Global` (from Phase 2)
+- **Record ID**: `global-primary`
+
+**Record 2: Global Secondary (CloudFront)**
+- **Record Name**: `global-rule.cloudfront.lab.zzhe.xyz` (same as primary)
+- **Record Type**: `CNAME` or `A`
+- **Alias**: Yes (for CloudFront distribution)
+- **Value**: `your-cloudfront-distribution.cloudfront.net`
+- **Routing Policy**: `Failover`
+- **Failover Type**: `Secondary`
+- **Health Check**: None (secondary doesn't need health check)
+- **Record ID**: `global-secondary`
+
+**1.2 Create South America Region Failover Records**
+
+**Record 3: South America Primary (Cloudflare)**
+- **Record Name**: `sa-rule.cloudfront.lab.zzhe.xyz`
+- **Record Type**: `CNAME` or `A`
+- **Alias**: No (if using CNAME) / Yes (if using A record)
+- **Value**: `your-cloudflare-cname.example.com` (same Cloudflare endpoint)
+- **Routing Policy**: `Failover`
+- **Failover Type**: `Primary`
+- **Health Check**: Select `HC-Logic-SA` (from Phase 2)
+- **Record ID**: `sa-primary`
+
+**Record 4: South America Secondary (CloudFront)**
+- **Record Name**: `sa-rule.cloudfront.lab.zzhe.xyz` (same as SA primary)
+- **Record Type**: `CNAME` or `A`
+- **Alias**: Yes (for CloudFront)
+- **Value**: `your-cloudfront-distribution.cloudfront.net` (same CloudFront)
+- **Routing Policy**: `Failover`
+- **Failover Type**: `Secondary`
+- **Health Check**: None
+- **Record ID**: `sa-secondary`
+
+---
+
+#### **Step 2: Create Layer 1 Record (Geographic Entry Point)**
+
+**2.1 Create the Main API Entry Point**
+
+**Record 5: Default/Global Geographic Rule**
+- **Record Name**: `api.cloudfront.lab.zzhe.xyz`
+- **Record Type**: `CNAME`
+- **Alias**: No
+- **Value**: `global-rule.cloudfront.lab.zzhe.xyz`
+- **Routing Policy**: `Geolocation`
+- **Location**: `Default` (catches all traffic not matching other rules)
+- **Record ID**: `api-default-global`
+
+**Record 6: South America Geographic Rule**
+- **Record Name**: `api.cloudfront.lab.zzhe.xyz` (same as default)
+- **Record Type**: `CNAME`
+- **Alias**: No
+- **Value**: `sa-rule.cloudfront.lab.zzhe.xyz`
+- **Routing Policy**: `Geolocation`
+- **Location**: `South America` (select continent)
+- **Record ID**: `api-sa-specific`
+
+---
+
+#### **Step 3: Verification and Testing**
+
+**3.1 DNS Propagation Check**
+```bash
+# Test from different geographic locations
+dig api.cloudfront.lab.zzhe.xyz
+nslookup api.cloudfront.lab.zzhe.xyz
+
+# Test specific regional rules directly
+dig global-rule.cloudfront.lab.zzhe.xyz
+dig sa-rule.cloudfront.lab.zzhe.xyz
+```
+
+**3.2 Health Check Verification**
+- Go to Route 53 Console → Health Checks
+- Verify `HC-Logic-Global` and `HC-Logic-SA` show "Success" status
+- Check CloudWatch alarms are in "OK" state
+
+**3.3 End-to-End Flow Test**
+```bash
+# Test from Global location (should hit global-rule → Cloudflare)
+curl -I https://api.cloudfront.lab.zzhe.xyz
+
+# Test failover by triggering health check failure
+# (Use simulation scripts from Phase 4)
+```
+
+---
+
+#### **Step 4: Advanced Configuration (Optional)**
+
+**4.1 Add Additional Geographic Regions**
+If you want more granular control, add specific countries/regions:
+
+```
+- Europe: europe-rule.cloudfront.lab.zzhe.xyz
+- Asia: asia-rule.cloudfront.lab.zzhe.xyz
+```
+
+**4.2 Configure TTL Values**
+- Set appropriate TTL values for faster failover:
+  - Layer 1 records: 60 seconds
+  - Layer 2 primary records: 60 seconds
+  - Layer 2 secondary records: 300 seconds
+
+**4.3 Add Monitoring**
+```bash
+# Set up CloudWatch monitoring for DNS queries
+aws logs create-log-group --log-group-name "/aws/route53/api.cloudfront.lab.zzhe.xyz"
+```
+
+---
+
+#### **Step 5: Configuration Validation Checklist**
+
+- [ ] Layer 2 Global failover: `global-rule.cloudfront.lab.zzhe.xyz` created
+- [ ] Layer 2 SA failover: `sa-rule.cloudfront.lab.zzhe.xyz` created
+- [ ] Layer 1 default route: `api.cloudfront.lab.zzhe.xyz` → `global-rule`
+- [ ] Layer 1 SA route: `api.cloudfront.lab.zzhe.xyz` → `sa-rule`
+- [ ] Health checks attached to primary records only
+- [ ] DNS propagation completed (24-48 hours max)
+- [ ] End-to-end testing successful from multiple geographic locations
+
+**Final DNS Structure:**
+```
+api.cloudfront.lab.zzhe.xyz (Entry Point)
+├── Default Location → global-rule.cloudfront.lab.zzhe.xyz
+│   ├── Primary → Cloudflare (with HC-Logic-Global)
+│   └── Secondary → CloudFront
+└── South America → sa-rule.cloudfront.lab.zzhe.xyz
+    ├── Primary → Cloudflare (with HC-Logic-SA)
+    └── Secondary → CloudFront
+```
 
 ### 4. Operations Scenario Testing
 
