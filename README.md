@@ -349,7 +349,92 @@ Scenario changes after adding user monitoring:
 | False Positive Filtering (Optional) | If changed to AND logic, requires both parties to alarm simultaneously for switching (usually not recommended, OR logic recommended for high availability) | (Depends on composite alarm logic) |
 | Manual Force Switchover | Administrator manually turns off ARC switch | Force switch to CloudFront |
 
-### 5. Additional Notes
+### 5. Manual Failover Control
+
+The architecture provides granular manual control through **ARC (Application Recovery Controller) switches** that can override automatic health checks for planned maintenance or emergency situations.
+
+#### **How Manual Control Works**
+
+The system uses **AND logic** for health checks:
+- **HC-Logic-Global** = `HC-Auto` AND `HC-Switch-Global`
+- **HC-Logic-SA** = `HC-Auto` AND `HC-Switch-Global` AND `HC-Switch-SA`
+
+When any switch is turned **OFF**, it forces traffic to the secondary CDN regardless of automatic health check status.
+
+#### **Manual Override Methods**
+
+**1. Global Manual Failover (Affects All Regions)**
+```bash
+# Force ALL traffic to secondary CDN (CloudFront)
+aws route53-recovery-control-config update-control-panel \
+  --control-panel-arn "arn:aws:route53-recovery-control::account:controlpanel/global-switch" \
+  --routing-control-state OFF
+
+# Restore to automatic behavior
+aws route53-recovery-control-config update-control-panel \
+  --control-panel-arn "arn:aws:route53-recovery-control::account:controlpanel/global-switch" \
+  --routing-control-state ON
+```
+
+**2. South America Specific Manual Failover**
+```bash
+# Force ONLY South America traffic to secondary CDN
+aws route53-recovery-control-config update-control-panel \
+  --control-panel-arn "arn:aws:route53-recovery-control::account:controlpanel/sa-switch" \
+  --routing-control-state OFF
+
+# Restore South America to automatic behavior
+aws route53-recovery-control-config update-control-panel \
+  --control-panel-arn "arn:aws:route53-recovery-control::account:controlpanel/sa-switch" \
+  --routing-control-state ON
+```
+
+**3. Via AWS Console**
+1. Navigate to **Route 53 Application Recovery Controller**
+2. Select your **Control Panel**
+3. Toggle the **Routing Controls**:
+   - `HC-Switch-Global`: Controls all regions
+   - `HC-Switch-SA`: Controls South America only
+
+**4. Via Simulation Scripts**
+```bash
+# Use the provided simulation scripts
+python3 simulation/toggle_arc.py --state OFF --region global
+python3 simulation/toggle_arc.py --state OFF --region sa
+
+# Restore automatic behavior
+python3 simulation/toggle_arc.py --state ON --region global
+python3 simulation/toggle_arc.py --state ON --region sa
+```
+
+#### **Manual Failover Scenarios**
+
+| Scenario | HC-Auto | HC-Switch-Global | HC-Switch-SA | Global Traffic | SA Traffic |
+|----------|---------|------------------|--------------|----------------|------------|
+| **Normal Operation** | ✅ Healthy | ✅ ON | ✅ ON | Primary CDN (Cloudflare) | Primary CDN (Cloudflare) |
+| **Automatic Failover** | ❌ Unhealthy | ✅ ON | ✅ ON | Secondary CDN (CloudFront) | Secondary CDN (CloudFront) |
+| **Global Manual Failover** | ✅ Healthy | ❌ **OFF** | ✅ ON | **Secondary CDN (CloudFront)** | **Secondary CDN (CloudFront)** |
+| **SA Manual Failover** | ✅ Healthy | ✅ ON | ❌ **OFF** | Primary CDN (Cloudflare) | **Secondary CDN (CloudFront)** |
+| **Both Manual Override** | ✅ Healthy | ❌ OFF | ❌ OFF | **Secondary CDN (CloudFront)** | **Secondary CDN (CloudFront)** |
+| **Emergency Override** | ❌ Unhealthy | ❌ OFF | ❌ OFF | **Secondary CDN (CloudFront)** | **Secondary CDN (CloudFront)** |
+
+#### **Use Cases for Manual Control**
+
+- **Planned Maintenance**: Switch traffic before performing CDN maintenance
+- **Performance Testing**: Route specific regions to test CDN performance
+- **Emergency Response**: Immediate traffic control without waiting for health checks
+- **Cost Optimization**: Route traffic to preferred CDN based on pricing
+- **Compliance**: Meet regional data sovereignty requirements
+
+#### **Best Practices**
+
+- **Document Changes**: Always log manual failover actions and reasons
+- **Coordinate Teams**: Notify relevant teams before manual switches
+- **Monitor Impact**: Watch metrics after manual failover to ensure proper operation
+- **Plan Restoration**: Have clear procedures for returning to automatic mode
+- **Test Regularly**: Practice manual failover procedures during maintenance windows
+
+### 6. Additional Notes
 
 - **Access Authentication**: Servers running user monitoring systems need IAM Role or AK/SK configured with `cloudwatch:PutMetricData` permissions
 - **Cost Optimization**: Custom Metrics and Alarms incur minimal fees, negligible compared to business high availability value
