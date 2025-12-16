@@ -14,7 +14,7 @@ This lab implements a **multi-CDN architecture** with:
 
 **Intelligent DNS Failover**: AWS Route 53 with health checks automatically routes users between Cloudflare (primary) and CloudFront (backup) based on CDN availability and geographic location.
 
-**Manual Override Controls**: ARC (Application Recovery Controller) switches provide immediate manual control for planned maintenance, emergency response, or operational requirements.
+**Manual Override Controls**: Route 53 Health Check manipulation provides immediate manual control for planned maintenance, emergency response, or operational requirements.
 
 🏗 Architecture
 
@@ -32,35 +32,7 @@ This solution utilizes AWS Route 53 as the traffic control plane, integrating Cl
   - Signal Source A: AWS CloudWatch Synthetics (external synthetic testing)
   - Signal Source B: User-built monitoring (internal business metrics, such as 5xx rate)
   - Aggregation Logic: HC-Auto = Signal Source A OR Signal Source B
-- **Fine-grained Control**: Retain independent manual failback capability for Global/South America regions
-
-#### **What is ARC (Application Recovery Controller)?**
-
-**AWS Route 53 Application Recovery Controller (ARC)** is a high-availability service that provides centralized traffic control across AWS regions and availability zones. In this lab, ARC serves as the "master switch" for manual traffic control.
-
-**Key ARC Concepts:**
-- **Control Panel**: A logical grouping of routing controls that can be managed together
-- **Routing Controls**: Individual switches that can be turned ON/OFF to control traffic flow
-- **Cluster**: A set of five redundant regional endpoints that ensure control plane availability
-
-**Why Use ARC vs Standard Route 53 Health Checks?**
-
-| Feature | Standard Route 53 Health Checks | Route 53 ARC |
-|---------|----------------------------------|---------------|
-| **Automatic Failover** | ✅ Based on endpoint health | ✅ Based on endpoint health + manual controls |
-| **Manual Override** | ❌ Limited (requires health check manipulation) | ✅ Dedicated routing controls (ON/OFF switches) |
-| **Cross-Region Control** | ❌ Complex to coordinate | ✅ Centralized control across regions |
-| **Emergency Response** | ❌ Slow (requires DNS changes) | ✅ Instant (flip switch) |
-| **Operational Safety** | ❌ Risk of misconfiguration | ✅ Explicit approval process |
-| **Cost** | 💰 Lower ($0.50/health check/month) | 💰 Higher ($195/cluster/month + $2.50/routing control/month) |
-
-**ARC in This Lab:**
-- **HC-Switch-Global**: ARC routing control for all regions
-- **HC-Switch-SA**: ARC routing control specific to South America
-- These switches provide **immediate manual override** capability over automatic health-based routing
-
-**Cost Optimization Note:**
-For cost-effective learning, this lab can simulate ARC behavior using standard Route 53 health checks with "inverted logic" instead of the full ARC service.
+- **Fine-grained Control**: Retain independent manual override capability for Global/South America regions through standard Route 53 health check manipulation
 
 **Architecture Diagram:**
 
@@ -99,19 +71,7 @@ graph TD
         Alarm_AWS --> Composite_Alarm["Composite Alarm<br/>(OR Logic)"]
         Alarm_User --> Composite_Alarm
 
-        Composite_Alarm --> HC_Auto["HC-Auto: Automatic Fault Signal"]
-
-        ARC_Global["ARC Switch: Global"]
-        ARC_SA["ARC Switch: South America"]
-    end
-
-    subgraph Logic["Health Check Logic"]
-        HC_Auto --> Calc_G["AND Gate Global"]
-        ARC_Global --> Calc_G
-
-        HC_Auto --> Calc_SA["AND Gate SA"]
-        ARC_Global --> Calc_SA
-        ARC_SA --> Calc_SA
+        Composite_Alarm --> HC_Auto["HC-Auto: Health Check"]
     end
 
     %% Both CDNs pull from single origin
@@ -120,9 +80,9 @@ graph TD
     CF_SA -.->|Pulls from| ALB_Origin
     AWS_SA -.->|Pulls from| ALB_Origin
 
-    %% Health checks monitor CDN availability (not origin)
-    Calc_G -.->|Controls Health| CF_Global
-    Calc_SA -.->|Controls Health| CF_SA
+    %% Health check directly controls CDN routing
+    HC_Auto -.->|Controls Health| CF_Global
+    HC_Auto -.->|Controls Health| CF_SA
 
     %% Origin monitoring (single origin)
     CW_Canary -.->|Monitors CDNs| CF_Global
@@ -183,7 +143,7 @@ Operation: Create Composite Alarm
 - Logic expression: ALARM(Alarm_A) OR ALARM(Alarm_B)
 - Effect: Composite alarm enters ALARM state when either external testing fails OR internal business metrics deteriorate
 
-**Phase 2: Health Checks and ARC Switch**
+**Phase 2: Health Checks Setup**
 
 Update basic signal definition, using composite alarm as automatic signal source.
 
@@ -192,12 +152,13 @@ Update basic signal definition, using composite alarm as automatic signal source
 - Target: Select the Composite Alarm created in previous step
 - Logic: When composite alarm triggers, this HC becomes Unhealthy
 
-**HC-Switch-Global (ARC Switch):** Unchanged, for manual global control
-**HC-Switch-SA (ARC Switch):** Unchanged, for manual South America control
+**Manual Control Health Checks:**
+- **HC-Manual-Global**: Standard Route 53 health check for manual global control
+- **HC-Manual-SA**: Standard Route 53 health check for manual South America control
 
 **Calculated Health Checks (Logic Combination):**
-- HC-Logic-Global (AND): HC-Auto + HC-Switch-Global
-- HC-Logic-SA (AND): HC-Auto + HC-Switch-Global + HC-Switch-SA
+- HC-Logic-Global (AND): HC-Auto + HC-Manual-Global
+- HC-Logic-SA (AND): HC-Auto + HC-Manual-Global + HC-Manual-SA
 
 **Phase 3: Configure Layered DNS Records - Manual Step-by-Step Guide**
 
@@ -377,76 +338,77 @@ Scenario changes after adding user monitoring:
 | External Network Outage | AWS Canary detects Cloudflare failure → Alarm A triggers → Composite Alarm triggers | Automatic switch to CloudFront |
 | Internal Business Exception | User system detects API error rate spike → Push metrics → Alarm B triggers → Composite Alarm triggers | Automatic switch to CloudFront |
 | False Positive Filtering (Optional) | If changed to AND logic, requires both parties to alarm simultaneously for switching (usually not recommended, OR logic recommended for high availability) | (Depends on composite alarm logic) |
-| Manual Force Switchover | Administrator manually turns off ARC switch | Force switch to CloudFront |
+| Manual Force Switchover | Administrator manually disables health check | Force switch to CloudFront |
 
 ### 5. Manual Failover Control
 
-The architecture provides granular manual control through **ARC (Application Recovery Controller) switches** that can override automatic health checks for planned maintenance or emergency situations.
+The architecture provides granular manual control through **standard Route 53 health check manipulation** for planned maintenance or emergency situations.
 
 #### **How Manual Control Works**
 
-The system uses **AND logic** for health checks:
-- **HC-Logic-Global** = `HC-Auto` AND `HC-Switch-Global`
-- **HC-Logic-SA** = `HC-Auto` AND `HC-Switch-Global` AND `HC-Switch-SA`
+The system uses **standard Route 53 health checks** for CDN routing:
+- **HC-Logic-Global**: Calculated health check controlling Cloudflare routing for global traffic
+- **HC-Logic-SA**: Calculated health check controlling Cloudflare routing for South America traffic
 
-When any switch is turned **OFF**, it forces traffic to the secondary CDN regardless of automatic health check status.
+**Manual Override**: Simply **disable** the manual control health check (HC-Manual-Global or HC-Manual-SA) to force traffic to CloudFront (secondary CDN). When disabled, the calculated health check becomes unhealthy and Route 53 automatically routes to the secondary record (CloudFront).
 
 #### **Manual Override Methods**
 
 **1. Global Manual Failover (Affects All Regions)**
 ```bash
-# Force ALL traffic to secondary CDN (CloudFront)
-aws route53-recovery-control-config update-control-panel \
-  --control-panel-arn "arn:aws:route53-recovery-control::account:controlpanel/global-switch" \
-  --routing-control-state OFF
+# Force ALL traffic to secondary CDN (CloudFront) by disabling manual control health check
+aws route53 change-health-check \
+  --health-check-id HC-MANUAL-GLOBAL \
+  --disabled
 
-# Restore to automatic behavior
-aws route53-recovery-control-config update-control-panel \
-  --control-panel-arn "arn:aws:route53-recovery-control::account:controlpanel/global-switch" \
-  --routing-control-state ON
+# Restore to automatic behavior by re-enabling manual control health check
+aws route53 change-health-check \
+  --health-check-id HC-MANUAL-GLOBAL \
+  --enable
 ```
 
 **2. South America Specific Manual Failover**
 ```bash
 # Force ONLY South America traffic to secondary CDN
-aws route53-recovery-control-config update-control-panel \
-  --control-panel-arn "arn:aws:route53-recovery-control::account:controlpanel/sa-switch" \
-  --routing-control-state OFF
+aws route53 change-health-check \
+  --health-check-id HC-MANUAL-SA \
+  --disabled
 
 # Restore South America to automatic behavior
-aws route53-recovery-control-config update-control-panel \
-  --control-panel-arn "arn:aws:route53-recovery-control::account:controlpanel/sa-switch" \
-  --routing-control-state ON
+aws route53 change-health-check \
+  --health-check-id HC-MANUAL-SA \
+  --enable
 ```
 
 **3. Via AWS Console**
-1. Navigate to **Route 53 Application Recovery Controller**
-2. Select your **Control Panel**
-3. Toggle the **Routing Controls**:
-   - `HC-Switch-Global`: Controls all regions
-   - `HC-Switch-SA`: Controls South America only
+1. Navigate to **Route 53 Console → Health Checks**
+2. Find the manual control health checks:
+   - `HC-Manual-Global`: Controls global manual override
+   - `HC-Manual-SA`: Controls South America manual override
+3. **Disable** health check to force traffic to CloudFront
+4. **Enable** health check to restore automatic routing
 
 **4. Via Simulation Scripts**
 ```bash
 # Use the provided simulation scripts
-python3 simulation/toggle_arc.py --state OFF --region global
-python3 simulation/toggle_arc.py --state OFF --region sa
+python3 simulation/disable_health_check.py --region global
+python3 simulation/disable_health_check.py --region sa
 
 # Restore automatic behavior
-python3 simulation/toggle_arc.py --state ON --region global
-python3 simulation/toggle_arc.py --state ON --region sa
+python3 simulation/enable_health_check.py --region global
+python3 simulation/enable_health_check.py --region sa
 ```
 
 #### **Manual Failover Scenarios**
 
-| Scenario | HC-Auto | HC-Switch-Global | HC-Switch-SA | Global Traffic | SA Traffic |
+| Scenario | HC-Auto | HC-Manual-Global | HC-Manual-SA | Global Traffic | SA Traffic |
 |----------|---------|------------------|--------------|----------------|------------|
-| **Normal Operation** | ✅ Healthy | ✅ ON | ✅ ON | Primary CDN (Cloudflare) | Primary CDN (Cloudflare) |
-| **Automatic Failover** | ❌ Unhealthy | ✅ ON | ✅ ON | Secondary CDN (CloudFront) | Secondary CDN (CloudFront) |
-| **Global Manual Failover** | ✅ Healthy | ❌ **OFF** | ✅ ON | **Secondary CDN (CloudFront)** | **Secondary CDN (CloudFront)** |
-| **SA Manual Failover** | ✅ Healthy | ✅ ON | ❌ **OFF** | Primary CDN (Cloudflare) | **Secondary CDN (CloudFront)** |
-| **Both Manual Override** | ✅ Healthy | ❌ OFF | ❌ OFF | **Secondary CDN (CloudFront)** | **Secondary CDN (CloudFront)** |
-| **Emergency Override** | ❌ Unhealthy | ❌ OFF | ❌ OFF | **Secondary CDN (CloudFront)** | **Secondary CDN (CloudFront)** |
+| **Normal Operation** | ✅ Healthy | ✅ Enabled | ✅ Enabled | Primary CDN (Cloudflare) | Primary CDN (Cloudflare) |
+| **Automatic Failover** | ❌ Unhealthy | ✅ Enabled | ✅ Enabled | Secondary CDN (CloudFront) | Secondary CDN (CloudFront) |
+| **Global Manual Failover** | ✅ Healthy | ❌ **Disabled** | ✅ Enabled | **Secondary CDN (CloudFront)** | **Secondary CDN (CloudFront)** |
+| **SA Manual Failover** | ✅ Healthy | ✅ Enabled | ❌ **Disabled** | Primary CDN (Cloudflare) | **Secondary CDN (CloudFront)** |
+| **Both Manual Override** | ✅ Healthy | ❌ Disabled | ❌ Disabled | **Secondary CDN (CloudFront)** | **Secondary CDN (CloudFront)** |
+| **Emergency Override** | ❌ Unhealthy | ❌ Disabled | ❌ Disabled | **Secondary CDN (CloudFront)** | **Secondary CDN (CloudFront)** |
 
 #### **Use Cases for Manual Control**
 
@@ -596,10 +558,10 @@ curl -X POST https://control.cloudfront-ha.lab.zzhe.xyz/approve-failback \
 Directory Structure
 
 aws-multi-cdn-control-lab/
-├── infrastructure/    # Pulumi IaC for Route 53, ARC, single origin ALB, and CDN configurations
+├── infrastructure/    # Pulumi IaC for Route 53, Health Checks, single origin ALB, and CDN configurations
 ├── control-plane/     # EC2 instances for the Config API behind ALB
 ├── client-app/        # React Web App demonstrating the "Smart Client"
-└── simulation/        # Python scripts to break CDN endpoints and flip switches
+└── simulation/        # Python scripts to break CDN endpoints and manipulate health checks
 
 
 Traffic Flow
@@ -613,7 +575,7 @@ Traffic Flow
 
 **Important**: This lab demonstrates **CDN vendor failover**, not origin failover. Both Cloudflare and CloudFront cache content from the same single origin server. Route 53 routes end users to the healthier CDN vendor.
 
-**Control Plane**: A highly available API running on EC2 instances behind ALB that reads the state of our "Emergency Switch" (Route 53 ARC).
+**Control Plane**: A highly available API running on EC2 instances behind ALB that manages the health check states for manual override control.
 
 Client:
 
@@ -677,16 +639,16 @@ python3 simulation/break_primary.py
 Observe the Client App automatically switch to Secondary (Yellow/Orange status).
 
 Scenario B: Manual Kill Switch
-Force traffic over via AWS Route 53 ARC.
+Force traffic over by disabling Cloudflare health checks.
 
-python3 simulation/toggle_arc.py --state OFF
+python3 simulation/disable_health_check.py --region global
 
 
 💰 Cost Warning
 
 This lab creates real AWS resources.
 
-**Route 53 ARC**: Can be expensive ($195/month/cluster + $2.50/month/routing control) if using full ARC features. See the ARC comparison table in the Architecture section for cost details. For cost-effective learning, this lab can simulate ARC behavior using standard Route 53 Health Checks + Inverted Logic at significantly lower cost (~$1-2/month instead of ~$200/month).
+**Route 53 Health Checks**: This lab uses standard Route 53 Health Checks for manual override control, which is cost-effective at approximately $1-2/month for the health checks and alarms used in this architecture.
 
 ALB + EC2: Costs for Application Load Balancers and EC2 instances running the mock services.
 

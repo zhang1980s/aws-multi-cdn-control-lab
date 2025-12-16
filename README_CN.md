@@ -14,7 +14,7 @@ AWS 多 CDN 控制实验室
 
 **智能 DNS 故障转移**：AWS Route 53 通过健康检查根据 CDN 可用性和地理位置自动在 Cloudflare（主要）和 CloudFront（备用）之间路由用户。
 
-**手动覆盖控制**：ARC（应用程序恢复控制器）开关为计划维护、紧急响应或运营需求提供即时手动控制。
+**手动覆盖控制**：Route 53 健康检查操作为计划维护、紧急响应或运营需求提供即时手动控制。
 
 🏗 架构
 
@@ -33,33 +33,6 @@ AWS 多 CDN 控制实验室
   - 聚合逻辑：HC-Auto = 信号源 A OR 信号源 B
 - **精细化控制**：保持全球/南美地区独立的手动故障恢复能力
 
-#### **什么是 ARC（应用程序恢复控制器）？**
-
-**AWS Route 53 应用程序恢复控制器（ARC）** 是一个高可用性服务，提供跨 AWS 区域和可用区的集中流量控制。在此实验室中，ARC 作为手动流量控制的"主开关"。
-
-**ARC 核心概念：**
-- **控制面板**：可以一起管理的路由控制的逻辑分组
-- **路由控制**：可以打开/关闭以控制流量的独立开关
-- **集群**：确保控制平面可用性的五个冗余区域端点集合
-
-**为什么使用 ARC 而不是标准 Route 53 健康检查？**
-
-| 功能 | 标准 Route 53 健康检查 | Route 53 ARC |
-|------|------------------------|---------------|
-| **自动故障转移** | ✅ 基于端点健康状态 | ✅ 基于端点健康状态 + 手动控制 |
-| **手动覆盖** | ❌ 有限（需要健康检查操作） | ✅ 专用路由控制（开/关开关） |
-| **跨区域控制** | ❌ 协调复杂 | ✅ 跨区域集中控制 |
-| **紧急响应** | ❌ 慢（需要 DNS 更改） | ✅ 即时（切换开关） |
-| **操作安全** | ❌ 配置错误风险 | ✅ 明确批准流程 |
-| **成本** | 💰 较低（$0.50/健康检查/月） | 💰 较高（$195/集群/月 + $2.50/路由控制/月） |
-
-**此实验室中的 ARC：**
-- **HC-Switch-Global**：所有区域的 ARC 路由控制
-- **HC-Switch-SA**：南美特定的 ARC 路由控制
-- 这些开关提供对自动基于健康状态路由的 **即时手动覆盖** 功能
-
-**成本优化说明：**
-为了经济高效的学习，此实验室可以使用标准 Route 53 健康检查和"反向逻辑"模拟 ARC 行为，而不是完整的 ARC 服务。
 
 **架构图：**
 
@@ -98,19 +71,7 @@ graph TD
         Alarm_AWS --> Composite_Alarm["复合告警<br/>(OR 逻辑)"]
         Alarm_User --> Composite_Alarm
 
-        Composite_Alarm --> HC_Auto["HC-Auto: 自动故障信号"]
-
-        ARC_Global["ARC 开关: 全球"]
-        ARC_SA["ARC 开关: 南美"]
-    end
-
-    subgraph Logic["健康检查逻辑"]
-        HC_Auto --> Calc_G["AND 门 全球"]
-        ARC_Global --> Calc_G
-
-        HC_Auto --> Calc_SA["AND 门 南美"]
-        ARC_Global --> Calc_SA
-        ARC_SA --> Calc_SA
+        Composite_Alarm --> HC_Auto["HC-Auto: 健康检查"]
     end
 
     %% 两个 CDN 都从单一源站拉取内容
@@ -119,9 +80,9 @@ graph TD
     CF_SA -.->|拉取内容| ALB_Origin
     AWS_SA -.->|拉取内容| ALB_Origin
 
-    %% 健康检查监控 CDN 可用性（非源站）
-    Calc_G -.->|控制健康状态| CF_Global
-    Calc_SA -.->|控制健康状态| CF_SA
+    %% 健康检查直接控制 CDN 路由
+    HC_Auto -.->|控制健康状态| CF_Global
+    HC_Auto -.->|控制健康状态| CF_SA
 
     %% 源站监控（单一源站）
     CW_Canary -.->|监控 CDN| CF_Global
@@ -182,7 +143,7 @@ aws cloudwatch put-metric-data \
 - 逻辑表达式：ALARM(Alarm_A) OR ALARM(Alarm_B)
 - 效果：当外部测试失败或内部业务指标恶化时，复合告警进入 ALARM 状态
 
-**阶段 2：健康检查和 ARC 开关**
+**阶段 2：健康检查设置**
 
 更新基础信号定义，使用复合告警作为自动信号源。
 
@@ -191,12 +152,13 @@ aws cloudwatch put-metric-data \
 - 目标：选择前一步创建的复合告警
 - 逻辑：当复合告警触发时，此 HC 变为不健康
 
-**HC-Switch-Global（ARC 开关）：** 保持不变，用于手动全球控制
-**HC-Switch-SA（ARC 开关）：** 保持不变，用于手动南美控制
+**手动控制健康检查：**
+- **HC-Manual-Global**：用于手动全球控制的标准 Route 53 健康检查
+- **HC-Manual-SA**：用于手动南美控制的标准 Route 53 健康检查
 
 **计算健康检查（逻辑组合）：**
-- HC-Logic-Global (AND)：HC-Auto + HC-Switch-Global
-- HC-Logic-SA (AND)：HC-Auto + HC-Switch-Global + HC-Switch-SA
+- HC-Logic-Global (AND)：HC-Auto + HC-Manual-Global
+- HC-Logic-SA (AND)：HC-Auto + HC-Manual-Global + HC-Manual-SA
 
 **阶段 3：配置分层 DNS 记录 - 手动逐步指南**
 
@@ -376,76 +338,77 @@ api.cloudfront-ha.lab.zzhe.xyz（入口点）
 | 外部网络中断 | AWS Canary 检测到 Cloudflare 故障 → 告警 A 触发 → 复合告警触发 | 自动切换到 CloudFront |
 | 内部业务异常 | 用户系统检测到 API 错误率激增 → 推送指标 → 告警 B 触发 → 复合告警触发 | 自动切换到 CloudFront |
 | 误报过滤（可选） | 如果改为 AND 逻辑，需要双方同时告警才切换（通常不建议，建议使用 OR 逻辑以确保高可用性） | （取决于复合告警逻辑） |
-| 手动强制切换 | 管理员手动关闭 ARC 开关 | 强制切换到 CloudFront |
+| 手动强制切换 | 管理员手动禁用健康检查 | 强制切换到 CloudFront |
 
 ### 5. 手动故障转移控制
 
-架构通过 **ARC（应用程序恢复控制器）开关** 提供精细的手动控制，可以覆盖自动健康检查，用于计划维护或紧急情况。
+架构通过 **标准 Route 53 健康检查操作** 提供精细的手动控制，用于计划维护或紧急情况。
 
 #### **手动控制工作原理**
 
-系统对健康检查使用 **AND 逻辑**：
-- **HC-Logic-Global** = `HC-Auto` AND `HC-Switch-Global`
-- **HC-Logic-SA** = `HC-Auto` AND `HC-Switch-Global` AND `HC-Switch-SA`
+系统使用 **标准 Route 53 健康检查** 进行 CDN 路由：
+- **HC-Logic-Global**：控制全球流量的 Cloudflare 路由的计算健康检查
+- **HC-Logic-SA**：控制南美流量的 Cloudflare 路由的计算健康检查
 
-当任何开关设为 **OFF** 时，无论自动健康检查状态如何，都会强制流量转到备用 CDN。
+**手动覆盖**：只需 **禁用** 手动控制健康检查（HC-Manual-Global 或 HC-Manual-SA）即可强制流量转到 CloudFront（备用 CDN）。当禁用时，计算健康检查变为不健康，Route 53 自动路由到备用记录（CloudFront）。
 
 #### **手动覆盖方法**
 
 **1. 全球手动故障转移（影响所有地区）**
 ```bash
-# 强制所有流量到备用 CDN (CloudFront)
-aws route53-recovery-control-config update-control-panel \
-  --control-panel-arn "arn:aws:route53-recovery-control::account:controlpanel/global-switch" \
-  --routing-control-state OFF
+# 强制所有流量到备用 CDN (CloudFront) 通过禁用手动控制健康检查
+aws route53 change-health-check \
+  --health-check-id HC-MANUAL-GLOBAL \
+  --disabled
 
-# 恢复到自动行为
-aws route53-recovery-control-config update-control-panel \
-  --control-panel-arn "arn:aws:route53-recovery-control::account:controlpanel/global-switch" \
-  --routing-control-state ON
+# 恢复到自动行为通过重新启用手动控制健康检查
+aws route53 change-health-check \
+  --health-check-id HC-MANUAL-GLOBAL \
+  --enable
 ```
 
 **2. 南美特定手动故障转移**
 ```bash
 # 仅强制南美流量到备用 CDN
-aws route53-recovery-control-config update-control-panel \
-  --control-panel-arn "arn:aws:route53-recovery-control::account:controlpanel/sa-switch" \
-  --routing-control-state OFF
+aws route53 change-health-check \
+  --health-check-id HC-MANUAL-SA \
+  --disabled
 
 # 恢复南美到自动行为
-aws route53-recovery-control-config update-control-panel \
-  --control-panel-arn "arn:aws:route53-recovery-control::account:controlpanel/sa-switch" \
-  --routing-control-state ON
+aws route53 change-health-check \
+  --health-check-id HC-MANUAL-SA \
+  --enable
 ```
 
 **3. 通过 AWS 控制台**
-1. 导航到 **Route 53 应用程序恢复控制器**
-2. 选择您的 **控制面板**
-3. 切换 **路由控制**：
-   - `HC-Switch-Global`：控制所有地区
-   - `HC-Switch-SA`：仅控制南美
+1. 导航到 **Route 53 控制台 → 健康检查**
+2. 找到手动控制健康检查：
+   - `HC-Manual-Global`：控制全球手动覆盖
+   - `HC-Manual-SA`：控制南美手动覆盖
+3. **禁用** 健康检查以强制流量转到 CloudFront
+4. **启用** 健康检查以恢复自动路由
 
 **4. 通过模拟脚本**
 ```bash
 # 使用提供的模拟脚本
-python3 simulation/toggle_arc.py --state OFF --region global
-python3 simulation/toggle_arc.py --state OFF --region sa
+python3 simulation/disable_health_check.py --region global
+python3 simulation/disable_health_check.py --region sa
 
 # 恢复自动行为
-python3 simulation/toggle_arc.py --state ON --region global
-python3 simulation/toggle_arc.py --state ON --region sa
+python3 simulation/enable_health_check.py --region global
+python3 simulation/enable_health_check.py --region sa
 ```
 
 #### **手动故障转移场景**
 
-| 场景 | HC-Auto | HC-Switch-Global | HC-Switch-SA | 全球流量 | SA 流量 |
+| 场景 | HC-Auto | HC-Manual-Global | HC-Manual-SA | 全球流量 | SA 流量 |
 |------|---------|------------------|--------------|----------|---------|
-| **正常运行** | ✅ 健康 | ✅ ON | ✅ ON | 主要 CDN (Cloudflare) | 主要 CDN (Cloudflare) |
-| **自动故障转移** | ❌ 不健康 | ✅ ON | ✅ ON | 备用 CDN (CloudFront) | 备用 CDN (CloudFront) |
-| **全球手动故障转移** | ✅ 健康 | ❌ **OFF** | ✅ ON | **备用 CDN (CloudFront)** | **备用 CDN (CloudFront)** |
-| **SA 手动故障转移** | ✅ 健康 | ✅ ON | ❌ **OFF** | 主要 CDN (Cloudflare) | **备用 CDN (CloudFront)** |
-| **双重手动覆盖** | ✅ 健康 | ❌ OFF | ❌ OFF | **备用 CDN (CloudFront)** | **备用 CDN (CloudFront)** |
-| **紧急覆盖** | ❌ 不健康 | ❌ OFF | ❌ OFF | **备用 CDN (CloudFront)** | **备用 CDN (CloudFront)** |
+| **正常运行** | ✅ 健康 | ✅ 启用 | ✅ 启用 | 主要 CDN (Cloudflare) | 主要 CDN (Cloudflare) |
+| **自动故障转移** | ❌ 不健康 | ✅ 启用 | ✅ 启用 | 备用 CDN (CloudFront) | 备用 CDN (CloudFront) |
+| **全球手动故障转移** | ✅ 健康 | ❌ **禁用** | ✅ 启用 | **备用 CDN (CloudFront)** | **备用 CDN (CloudFront)** |
+| **SA 手动故障转移** | ✅ 健康 | ✅ 启用 | ❌ **禁用** | 主要 CDN (Cloudflare) | **备用 CDN (CloudFront)** |
+| **双重手动覆盖** | ✅ 健康 | ❌ 禁用 | ❌ 禁用 | **备用 CDN (CloudFront)** | **备用 CDN (CloudFront)** |
+| **紧急覆盖** | ❌ 不健康 | ❌ 禁用 | ❌ 禁用 | **备用 CDN (CloudFront)** | **备用 CDN (CloudFront)** |
 
 #### **手动控制用例**
 
@@ -595,10 +558,10 @@ curl -X POST https://control.cloudfront-ha.lab.zzhe.xyz/approve-failback \
 目录结构
 
 aws-multi-cdn-control-lab/
-├── infrastructure/    # Pulumi IaC，用于 Route 53、ARC、单一源站 ALB 和 CDN 配置
+├── infrastructure/    # Pulumi IaC，用于 Route 53、健康检查、单一源站 ALB 和 CDN 配置
 ├── control-plane/     # ALB 后的 Config API 的 EC2 实例
 ├── client-app/        # 演示"智能客户端"的 React Web 应用
-└── simulation/        # 用于破坏 CDN 端点和切换开关的 Python 脚本
+└── simulation/        # 用于破坏 CDN 端点和操作健康检查的 Python 脚本
 
 
 流量转发
@@ -612,7 +575,7 @@ aws-multi-cdn-control-lab/
 
 **重要**：此实验室演示 **CDN 供应商故障转移**，而不是源站故障转移。Cloudflare 和 CloudFront 都从同一个单一源站服务器缓存内容。Route 53 将终端用户路由到更健康的 CDN 供应商。
 
-**控制平面**：在 ALB 后运行的高可用 API，运行在 EC2 实例上，读取我们的"紧急开关"（Route 53 ARC）状态。
+**控制平面**：在 ALB 后运行的高可用 API，运行在 EC2 实例上，管理手动覆盖控制的健康检查状态。
 
 客户端：
 
@@ -675,17 +638,17 @@ python3 simulation/break_primary.py
 
 观察客户端应用自动切换到备用（黄色/橙色状态）。
 
-场景 B：手动终止开关
-通过 AWS Route 53 ARC 强制流量转移。
+场景 B：手动健康检查控制
+通过禁用健康检查强制流量转移。
 
-python3 simulation/toggle_arc.py --state OFF
+python3 simulation/disable_health_check.py --region global
 
 
 💰 成本警告
 
 此实验室创建真实的 AWS 资源。
 
-**Route 53 ARC**：如果使用完整 ARC 功能可能很昂贵（$195/月/集群 + $2.50/月/路由控制）。成本详情请参见架构部分的 ARC 对比表。为了经济高效的学习，此实验室可以使用标准 Route 53 健康检查 + 反向逻辑以显著较低的成本模拟 ARC 行为（约 $1-2/月 而不是约 $200/月）。
+**Route 53 健康检查**：此实验室使用标准 Route 53 健康检查进行手动覆盖控制，成本效益高，此架构中使用的健康检查和告警约为 $1-2/月。
 
 ALB + EC2：运行模拟服务的应用负载均衡器和 EC2 实例的成本。
 
