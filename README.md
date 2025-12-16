@@ -1,18 +1,20 @@
 AWS Multi-CDN Control Lab
 
-A Proof of Concept (PoC) demonstrating a Hybrid Traffic Control Architecture. This lab solves the latency issues inherent in DNS-based failover by combining Server-Side traffic steering (Route 53) with Client-Side dynamic routing (HTTPDNS/Bootstrap Config).
+A Proof of Concept (PoC) demonstrating **CDN Vendor Redundancy** for High Availability. This lab shows how to achieve **automatic failover between multiple CDN providers** (Cloudflare and CloudFront) using a single origin server and intelligent DNS routing.
 
 🎯 The Problem
 
-Traditional DNS Failover (e.g., Route 53 Health Checks) suffers from "Propagation Lag." When a primary CDN (e.g., Cloudflare) fails, it can take anywhere from several minutes to over an hour for users to naturally switch to the backup (e.g., CloudFront) due to TTL caching and ISP behavior.
+**CDN Vendor Lock-in Risk**: Relying on a single CDN provider creates a single point of failure. When your primary CDN experiences outages, degraded performance, or regional issues, your entire service becomes unavailable until the CDN recovers.
 
 💡 The Solution
 
-This lab implements a dual-layer approach:
+This lab implements a **multi-CDN architecture** with:
 
-Server-Side (The Safety Net): AWS Route 53 with Application Recovery Controller (ARC) for broad, region-based traffic shaping.
+**Single Origin**: One origin server that both CDN vendors pull content from, eliminating the need to maintain multiple origin infrastructures.
 
-Client-Side (The Speed): A "Bootstrap Config" pattern where the App/Web client asks "Where should I go?" before making requests, allowing for instant switching.
+**Intelligent DNS Failover**: AWS Route 53 with health checks automatically routes users between Cloudflare (primary) and CloudFront (backup) based on CDN availability and geographic location.
+
+**Manual Override Controls**: ARC (Application Recovery Controller) switches provide immediate manual control for planned maintenance, emergency response, or operational requirements.
 
 🏗 Architecture
 
@@ -31,6 +33,34 @@ This solution utilizes AWS Route 53 as the traffic control plane, integrating Cl
   - Signal Source B: User-built monitoring (internal business metrics, such as 5xx rate)
   - Aggregation Logic: HC-Auto = Signal Source A OR Signal Source B
 - **Fine-grained Control**: Retain independent manual failback capability for Global/South America regions
+
+#### **What is ARC (Application Recovery Controller)?**
+
+**AWS Route 53 Application Recovery Controller (ARC)** is a high-availability service that provides centralized traffic control across AWS regions and availability zones. In this lab, ARC serves as the "master switch" for manual traffic control.
+
+**Key ARC Concepts:**
+- **Control Panel**: A logical grouping of routing controls that can be managed together
+- **Routing Controls**: Individual switches that can be turned ON/OFF to control traffic flow
+- **Cluster**: A set of five redundant regional endpoints that ensure control plane availability
+
+**Why Use ARC vs Standard Route 53 Health Checks?**
+
+| Feature | Standard Route 53 Health Checks | Route 53 ARC |
+|---------|----------------------------------|---------------|
+| **Automatic Failover** | ✅ Based on endpoint health | ✅ Based on endpoint health + manual controls |
+| **Manual Override** | ❌ Limited (requires health check manipulation) | ✅ Dedicated routing controls (ON/OFF switches) |
+| **Cross-Region Control** | ❌ Complex to coordinate | ✅ Centralized control across regions |
+| **Emergency Response** | ❌ Slow (requires DNS changes) | ✅ Instant (flip switch) |
+| **Operational Safety** | ❌ Risk of misconfiguration | ✅ Explicit approval process |
+| **Cost** | 💰 Lower ($0.50/health check/month) | 💰 Higher ($195/cluster/month + $2.50/routing control/month) |
+
+**ARC in This Lab:**
+- **HC-Switch-Global**: ARC routing control for all regions
+- **HC-Switch-SA**: ARC routing control specific to South America
+- These switches provide **immediate manual override** capability over automatic health-based routing
+
+**Cost Optimization Note:**
+For cost-effective learning, this lab can simulate ARC behavior using standard Route 53 health checks with "inverted logic" instead of the full ARC service.
 
 **Architecture Diagram:**
 
@@ -656,7 +686,7 @@ python3 simulation/toggle_arc.py --state OFF
 
 This lab creates real AWS resources.
 
-Route 53 ARC: Can be expensive ($195/mo/cluster) if using the Cluster features. For this lab, we use standard Route 53 Health Checks + Inverted Logic to simulate ARC behavior at a lower cost.
+**Route 53 ARC**: Can be expensive ($195/month/cluster + $2.50/month/routing control) if using full ARC features. See the ARC comparison table in the Architecture section for cost details. For cost-effective learning, this lab can simulate ARC behavior using standard Route 53 Health Checks + Inverted Logic at significantly lower cost (~$1-2/month instead of ~$200/month).
 
 ALB + EC2: Costs for Application Load Balancers and EC2 instances running the mock services.
 
