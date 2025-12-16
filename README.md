@@ -24,12 +24,13 @@ This solution utilizes AWS Route 53 as the traffic control plane, integrating Cl
 
 
 **Core Logic:**
-- **Layered Routing**: Global and South America strategies are decoupled (Layer 1 & Layer 2)
+- **Layered Routing**: Global and South America strategies are decoupled (Layer 1 & Layer 2) for CDN selection, but **share the same origin infrastructure**
+- **Shared Origin**: Both Cloudflare and CloudFront CDNs (Global & SA) pull content from the same backend origin servers
 - **Multi-source Fault Signals:**
   - Signal Source A: AWS CloudWatch Synthetics (external synthetic testing)
   - Signal Source B: User-built monitoring (internal business metrics, such as 5xx rate)
   - Aggregation Logic: HC-Auto = Signal Source A OR Signal Source B
-- **Fine-grained Control**: Retain independent manual failback capability for Global/South America
+- **Fine-grained Control**: Retain independent manual failback capability for Global/South America regions
 
 **Architecture Diagram:**
 
@@ -45,11 +46,21 @@ graph TD
         R53_Entry["api.cloudfront.lab.zzhe.xyz"] -->|Default| R53_Global["Layer 2: Global"]
         R53_Entry -->|South America| R53_SA["Layer 2: South America"]
 
-        R53_Global -->|Primary| CF_G[Cloudflare Global]
-        R53_Global -->|Secondary| AWS_G[CloudFront Global]
+        R53_Global -->|Primary| CF_Global[Cloudflare CDN]
+        R53_Global -->|Secondary| AWS_Global[CloudFront CDN]
 
-        R53_SA -->|Primary| CF_SA[Cloudflare SA]
-        R53_SA -->|Secondary| AWS_SA[CloudFront SA]
+        R53_SA -->|Primary| CF_SA[Cloudflare CDN]
+        R53_SA -->|Secondary| AWS_SA[CloudFront CDN]
+    end
+
+    subgraph Origin["Shared Origin Infrastructure"]
+        ALB_Primary["ALB A: Mock Cloudflare<br/>primary.cloudfront.lab.zzhe.xyz"]
+        ALB_Secondary["ALB B: Mock CloudFront<br/>secondary.cloudfront.lab.zzhe.xyz"]
+        EC2_Primary["EC2 Instances<br/>Primary Service"]
+        EC2_Secondary["EC2 Instances<br/>Secondary Service"]
+
+        ALB_Primary --> EC2_Primary
+        ALB_Secondary --> EC2_Secondary
     end
 
     subgraph Monitor["Monitoring & Control Plane"]
@@ -76,11 +87,38 @@ graph TD
         ARC_SA --> Calc_SA
     end
 
-    Calc_G -.->|Controls Health| CF_G
+    %% CDNs pull from shared origin
+    CF_Global -.->|Pulls from| ALB_Primary
+    AWS_Global -.->|Pulls from| ALB_Secondary
+    CF_SA -.->|Pulls from| ALB_Primary
+    AWS_SA -.->|Pulls from| ALB_Secondary
+
+    %% Health checks monitor CDN availability
+    Calc_G -.->|Controls Health| CF_Global
     Calc_SA -.->|Controls Health| CF_SA
+
+    %% Origin monitoring
+    CW_Canary -.->|Monitors| ALB_Primary
+    User_Sys -.->|Monitors| EC2_Primary
 ```
 
-### 2. Detailed Configuration Steps
+### 2. Shared Origin Architecture
+
+**Key Concept**: This lab demonstrates that Global and South America regions **share the same origin infrastructure**. The geographic routing happens at the DNS/CDN edge level, not at the origin level.
+
+**How it works:**
+- **Single Origin**: One set of origin servers (ALB A + EC2 for primary, ALB B + EC2 for secondary)
+- **CDN Layer**: Cloudflare and CloudFront both cache content from these shared origins
+- **Geographic Routing**: Route 53 directs users to different CDN edges based on their location
+- **Shared Health**: Origin health affects all regions simultaneously - if the origin fails, both Global and SA users are affected
+
+**Benefits:**
+- **Simplified Operations**: One origin infrastructure to maintain
+- **Cost Effective**: No need to replicate origin servers across regions
+- **Consistent Data**: All users see the same content regardless of their CDN path
+- **Unified Monitoring**: Single set of origin metrics affects all routing decisions
+
+### 3. Detailed Configuration Steps
 
 **Phase 1: Configure Multi-source Monitoring Signals (New)**
 
@@ -140,7 +178,7 @@ Structure needs no changes, only ensure Layer 2 Primary Records reference update
 - Layer 1 (Entry): api.cloudfront.lab.zzhe.xyz uses Geolocation pointing to sa-rule or global-rule
 - Layer 2 (Rules): sa-rule and global-rule use Failover strategy, Primary points to Cloudflare, Secondary points to CloudFront
 
-### 3. Operations Scenario Testing
+### 4. Operations Scenario Testing
 
 Scenario changes after adding user monitoring:
 
@@ -151,7 +189,7 @@ Scenario changes after adding user monitoring:
 | False Positive Filtering (Optional) | If changed to AND logic, requires both parties to alarm simultaneously for switching (usually not recommended, OR logic recommended for high availability) | (Depends on composite alarm logic) |
 | Manual Force Switchover | Administrator manually turns off ARC switch | Force switch to CloudFront |
 
-### 4. Additional Notes
+### 5. Additional Notes
 
 - **Access Authentication**: Servers running user monitoring systems need IAM Role or AK/SK configured with `cloudwatch:PutMetricData` permissions
 - **Cost Optimization**: Custom Metrics and Alarms incur minimal fees, negligible compared to business high availability value
@@ -168,11 +206,13 @@ aws-multi-cdn-control-lab/
 
 Traffic Flow
 
-Mock Primary (Cloudflare): Simulated via ALB A with EC2 instances.
+**Shared Origin Infrastructure:**
+- **Mock Primary (Cloudflare)**: Simulated via ALB A with EC2 instances at `primary.cloudfront.lab.zzhe.xyz`
+- **Mock Secondary (CloudFront)**: Simulated via ALB B with EC2 instances at `secondary.cloudfront.lab.zzhe.xyz`
 
-Mock Secondary (CloudFront): Simulated via ALB B with EC2 instances.
+**Important**: In this lab, both Global and South America regions use the **same origin servers**. The CDNs (Cloudflare and CloudFront) would normally cache content from these shared origins, with geographic routing at the DNS layer determining which CDN edge users connect to.
 
-Control Plane: A highly available API running on EC2 instances behind ALB that reads the state of our "Emergency Switch" (Route 53 ARC).
+**Control Plane**: A highly available API running on EC2 instances behind ALB that reads the state of our "Emergency Switch" (Route 53 ARC).
 
 Client:
 
