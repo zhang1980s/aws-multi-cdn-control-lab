@@ -434,7 +434,130 @@ python3 simulation/toggle_arc.py --state ON --region sa
 - **Plan Restoration**: Have clear procedures for returning to automatic mode
 - **Test Regularly**: Practice manual failover procedures during maintenance windows
 
-### 6. Additional Notes
+### 6. Advanced Failover Control: Disable Automatic Failback
+
+In production environments, you may want **automatic failover** (fast response to outages) but **manual failback** (controlled recovery). This prevents "flapping" between CDNs when the primary CDN has intermittent issues.
+
+#### **The Challenge: Automatic Failback**
+
+By default, when HC-Auto recovers to healthy, traffic automatically returns to Cloudflare:
+```
+Time 10:00 - Cloudflare healthy → Traffic on Cloudflare
+Time 10:05 - Cloudflare unhealthy → Traffic switches to CloudFront (Auto)
+Time 10:07 - Cloudflare healthy again → Traffic switches back to Cloudflare (Auto)
+Time 10:09 - Cloudflare unhealthy → Traffic switches to CloudFront again (Auto)
+```
+
+This "flapping" can cause service instability.
+
+#### **Solution 1: Sticky Composite Alarm (Recommended)**
+
+Create a composite alarm that requires **manual reset** after triggering:
+
+**Step 1: Create Sticky Composite Alarm**
+```bash
+# Create composite alarm that stays in ALARM state until manually reset
+aws cloudwatch put-composite-alarm \
+  --alarm-name "Composite-Alarm-CDN-Health-Sticky" \
+  --alarm-rule "ALARM(Alarm_AWS) OR ALARM(Alarm_User)" \
+  --actions-enabled true \
+  --treat-missing-data ignore \
+  --alarm-actions "arn:aws:sns:region:account:manual-intervention-topic"
+```
+
+**Step 2: Update HC-Auto to Use Sticky Alarm**
+```bash
+# Point HC-Auto to the sticky composite alarm
+aws route53 change-health-check \
+  --health-check-id "HC-AUTO-ID" \
+  --alarm-name "Composite-Alarm-CDN-Health-Sticky"
+```
+
+**Step 3: Manual Failback Process**
+```bash
+# When ready to failback, manually reset the alarm
+aws cloudwatch set-alarm-state \
+  --alarm-name "Composite-Alarm-CDN-Health-Sticky" \
+  --state-value "OK" \
+  --state-reason "Manual approval for failback to primary CDN"
+```
+
+**Behavior with Sticky Alarm:**
+- ✅ **Automatic Failover**: When CDN issues occur → Traffic goes to CloudFront
+- ❌ **No Automatic Failback**: Alarm stays in ALARM state
+- 🔧 **Manual Failback**: Operations team resets alarm when ready
+
+#### **Solution 2: Asymmetric Health Checks**
+
+Use different health checks for failover (sensitive) and failback (manual control):
+
+**Step 1: Create Failover Health Check (Sensitive)**
+```bash
+# Sensitive health check - fails quickly for fast failover
+aws route53 create-health-check \
+  --caller-reference "failover-check-$(date +%s)" \
+  --health-check-config \
+    Type=CLOUDWATCH_METRIC,AlarmRegion=us-east-1,AlarmName=Composite-Alarm-CDN-Health,InsufficientDataHealthStatus=Failure,RequestInterval=30,FailureThreshold=2
+```
+
+**Step 2: Create Failback Health Check (Manual Control)**
+```bash
+# Create health check that monitors manual approval endpoint
+aws route53 create-health-check \
+  --caller-reference "failback-check-$(date +%s)" \
+  --health-check-config \
+    Type=HTTPS,ResourcePath=/approve-failback,FullyQualifiedDomainName=control.cloudfront-ha.lab.zzhe.xyz,Port=443,RequestInterval=30,FailureThreshold=3
+```
+
+**Step 3: Create Asymmetric Logic Structure**
+```bash
+# Create separate calculated health checks for failover and failback
+aws route53 create-health-check \
+  --caller-reference "hc-logic-global-failover-$(date +%s)" \
+  --health-check-config \
+    Type=CALCULATED,ChildHealthChecks=["HC-Failover-ID","HC-Switch-Global-ID"],HealthThreshold=2,CloudWatchAlarmRegion=us-east-1
+
+aws route53 create-health-check \
+  --caller-reference "hc-logic-global-failback-$(date +%s)" \
+  --health-check-config \
+    Type=CALCULATED,ChildHealthChecks=["HC-Failback-ID","HC-Switch-Global-ID"],HealthThreshold=2,CloudWatchAlarmRegion=us-east-1
+```
+
+**Step 4: Configure DNS Records with Asymmetric Logic**
+- **Primary Record (Cloudflare)**: Uses `HC-Logic-Global-Failback` (requires manual approval)
+- **Secondary Record (CloudFront)**: Uses `HC-Logic-Global-Failover` (automatic)
+
+**Step 5: Manual Failback Approval**
+```bash
+# Create endpoint that approves failback
+curl -X POST https://control.cloudfront-ha.lab.zzhe.xyz/approve-failback \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -d '{"region": "global", "approved_by": "operations-team"}'
+```
+
+#### **Failover/Failback Behavior Comparison**
+
+| Scenario | Default Behavior | Sticky Alarm (Solution 1) | Asymmetric Checks (Solution 2) |
+|----------|------------------|----------------------------|--------------------------------|
+| **CDN Issue Occurs** | Auto failover to CloudFront | Auto failover to CloudFront | Auto failover to CloudFront |
+| **CDN Issue Resolves** | **Auto failback to Cloudflare** | Stays on CloudFront | Stays on CloudFront |
+| **Manual Intervention** | N/A | Reset alarm → Failback | Approve endpoint → Failback |
+| **Complexity** | Low | Medium | High |
+| **Operational Control** | None | High | Very High |
+
+#### **Implementation Recommendations**
+
+**For Most Environments (Solution 1 - Sticky Alarm):**
+- Simple to implement and understand
+- Clear manual approval process
+- Good balance of automation and control
+
+**For Complex Environments (Solution 2 - Asymmetric Checks):**
+- Maximum operational flexibility
+- Separate approval workflows possible
+- Integration with change management systems
+
+### 7. Additional Notes
 
 - **Access Authentication**: Servers running user monitoring systems need IAM Role or AK/SK configured with `cloudwatch:PutMetricData` permissions
 - **Cost Optimization**: Custom Metrics and Alarms incur minimal fees, negligible compared to business high availability value
