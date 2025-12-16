@@ -53,14 +53,11 @@ graph TD
         R53_SA -->|Secondary| AWS_SA[CloudFront CDN]
     end
 
-    subgraph Origin["Shared Origin Infrastructure"]
-        ALB_Primary["ALB A: Mock Cloudflare<br/>primary.cloudfront.lab.zzhe.xyz"]
-        ALB_Secondary["ALB B: Mock CloudFront<br/>secondary.cloudfront.lab.zzhe.xyz"]
-        EC2_Primary["EC2 Instances<br/>Primary Service"]
-        EC2_Secondary["EC2 Instances<br/>Secondary Service"]
+    subgraph Origin["Single Origin Infrastructure"]
+        ALB_Origin["ALB: Origin Server<br/>origin.cloudfront.lab.zzhe.xyz"]
+        EC2_Origin["EC2 Instances<br/>Application Server"]
 
-        ALB_Primary --> EC2_Primary
-        ALB_Secondary --> EC2_Secondary
+        ALB_Origin --> EC2_Origin
     end
 
     subgraph Monitor["Monitoring & Control Plane"]
@@ -87,36 +84,38 @@ graph TD
         ARC_SA --> Calc_SA
     end
 
-    %% CDNs pull from shared origin
-    CF_Global -.->|Pulls from| ALB_Primary
-    AWS_Global -.->|Pulls from| ALB_Secondary
-    CF_SA -.->|Pulls from| ALB_Primary
-    AWS_SA -.->|Pulls from| ALB_Secondary
+    %% Both CDNs pull from single origin
+    CF_Global -.->|Pulls from| ALB_Origin
+    AWS_Global -.->|Pulls from| ALB_Origin
+    CF_SA -.->|Pulls from| ALB_Origin
+    AWS_SA -.->|Pulls from| ALB_Origin
 
-    %% Health checks monitor CDN availability
+    %% Health checks monitor CDN availability (not origin)
     Calc_G -.->|Controls Health| CF_Global
     Calc_SA -.->|Controls Health| CF_SA
 
-    %% Origin monitoring
-    CW_Canary -.->|Monitors| ALB_Primary
-    User_Sys -.->|Monitors| EC2_Primary
+    %% Origin monitoring (single origin)
+    CW_Canary -.->|Monitors CDNs| CF_Global
+    User_Sys -.->|Monitors Origin| ALB_Origin
 ```
 
-### 2. Shared Origin Architecture
+### 2. Single Origin + Multi-CDN Architecture
 
-**Key Concept**: This lab demonstrates that Global and South America regions **share the same origin infrastructure**. The geographic routing happens at the DNS/CDN edge level, not at the origin level.
+**Key Concept**: This lab demonstrates **one origin server** with **two CDN vendors** for high availability. Route 53 handles failover between CDN vendors, not between origins.
 
 **How it works:**
-- **Single Origin**: One set of origin servers (ALB A + EC2 for primary, ALB B + EC2 for secondary)
-- **CDN Layer**: Cloudflare and CloudFront both cache content from these shared origins
-- **Geographic Routing**: Route 53 directs users to different CDN edges based on their location
-- **Shared Health**: Origin health affects all regions simultaneously - if the origin fails, both Global and SA users are affected
+- **Single Origin**: One origin server (ALB + EC2) at `origin.cloudfront.lab.zzhe.xyz`
+- **Dual CDN Setup**:
+  - **Cloudflare CDN** pulls content from the origin (Primary CDN)
+  - **CloudFront CDN** pulls content from the same origin (Backup CDN)
+- **Route 53 Failover**: Routes end users between Cloudflare and CloudFront based on CDN health
+- **Geographic Routing**: Route 53 also provides geographic optimization (Global vs South America)
 
 **Benefits:**
-- **Simplified Operations**: One origin infrastructure to maintain
-- **Cost Effective**: No need to replicate origin servers across regions
-- **Consistent Data**: All users see the same content regardless of their CDN path
-- **Unified Monitoring**: Single set of origin metrics affects all routing decisions
+- **CDN Vendor Redundancy**: If one CDN provider has issues, automatic failover to the other
+- **Single Origin Maintenance**: Only one application server to manage and update
+- **Cost Effective**: No origin duplication, pay for CDN bandwidth only when needed
+- **Vendor Independence**: Not locked into a single CDN provider
 
 ### 3. Detailed Configuration Steps
 
@@ -193,21 +192,21 @@ This phase sets up the two-layer DNS routing structure that enables geographic-b
 
 Navigate to Route 53 Console → Hosted Zones → `cloudfront.lab.zzhe.xyz`
 
-**Record 1: Global Primary (Cloudflare)**
+**Record 1: Global Primary (Cloudflare CDN)**
 - **Record Name**: `global-rule.cloudfront.lab.zzhe.xyz`
-- **Record Type**: `CNAME` or `A` (depending on your Cloudflare setup)
-- **Alias**: No (if using CNAME) / Yes (if using A record with alias)
-- **Value**: `your-cloudflare-cname.example.com` (or Cloudflare IP)
+- **Record Type**: `CNAME`
+- **Alias**: No
+- **Value**: `your-site.cloudflare.com` (Cloudflare CDN endpoint that pulls from origin.cloudfront.lab.zzhe.xyz)
 - **Routing Policy**: `Failover`
 - **Failover Type**: `Primary`
 - **Health Check**: Select `HC-Logic-Global` (from Phase 2)
 - **Record ID**: `global-primary`
 
-**Record 2: Global Secondary (CloudFront)**
+**Record 2: Global Secondary (CloudFront CDN)**
 - **Record Name**: `global-rule.cloudfront.lab.zzhe.xyz` (same as primary)
-- **Record Type**: `CNAME` or `A`
+- **Record Type**: `CNAME`
 - **Alias**: Yes (for CloudFront distribution)
-- **Value**: `your-cloudfront-distribution.cloudfront.net`
+- **Value**: `d123abc456.cloudfront.net` (CloudFront distribution that pulls from origin.cloudfront.lab.zzhe.xyz)
 - **Routing Policy**: `Failover`
 - **Failover Type**: `Secondary`
 - **Health Check**: None (secondary doesn't need health check)
@@ -215,21 +214,21 @@ Navigate to Route 53 Console → Hosted Zones → `cloudfront.lab.zzhe.xyz`
 
 **1.2 Create South America Region Failover Records**
 
-**Record 3: South America Primary (Cloudflare)**
+**Record 3: South America Primary (Cloudflare CDN)**
 - **Record Name**: `sa-rule.cloudfront.lab.zzhe.xyz`
-- **Record Type**: `CNAME` or `A`
-- **Alias**: No (if using CNAME) / Yes (if using A record)
-- **Value**: `your-cloudflare-cname.example.com` (same Cloudflare endpoint)
+- **Record Type**: `CNAME`
+- **Alias**: No
+- **Value**: `your-site.cloudflare.com` (same Cloudflare CDN endpoint)
 - **Routing Policy**: `Failover`
 - **Failover Type**: `Primary`
 - **Health Check**: Select `HC-Logic-SA` (from Phase 2)
 - **Record ID**: `sa-primary`
 
-**Record 4: South America Secondary (CloudFront)**
+**Record 4: South America Secondary (CloudFront CDN)**
 - **Record Name**: `sa-rule.cloudfront.lab.zzhe.xyz` (same as SA primary)
-- **Record Type**: `CNAME` or `A`
-- **Alias**: Yes (for CloudFront)
-- **Value**: `your-cloudfront-distribution.cloudfront.net` (same CloudFront)
+- **Record Type**: `CNAME`
+- **Alias**: Yes (for CloudFront distribution)
+- **Value**: `d123abc456.cloudfront.net` (same CloudFront distribution)
 - **Routing Policy**: `Failover`
 - **Failover Type**: `Secondary`
 - **Health Check**: None
@@ -328,11 +327,15 @@ aws logs create-log-group --log-group-name "/aws/route53/api.cloudfront.lab.zzhe
 ```
 api.cloudfront.lab.zzhe.xyz (Entry Point)
 ├── Default Location → global-rule.cloudfront.lab.zzhe.xyz
-│   ├── Primary → Cloudflare (with HC-Logic-Global)
-│   └── Secondary → CloudFront
+│   ├── Primary → your-site.cloudflare.com (with HC-Logic-Global)
+│   └── Secondary → d123abc456.cloudfront.net
 └── South America → sa-rule.cloudfront.lab.zzhe.xyz
-    ├── Primary → Cloudflare (with HC-Logic-SA)
-    └── Secondary → CloudFront
+    ├── Primary → your-site.cloudflare.com (with HC-Logic-SA)
+    └── Secondary → d123abc456.cloudfront.net
+
+Single Origin: origin.cloudfront.lab.zzhe.xyz
+├── Cloudflare CDN pulls from origin
+└── CloudFront CDN pulls from origin
 ```
 
 ### 4. Operations Scenario Testing
@@ -355,19 +358,22 @@ Scenario changes after adding user monitoring:
 Directory Structure
 
 aws-multi-cdn-control-lab/
-├── infrastructure/    # Pulumi IaC for Route 53, ARC, ALB, and Mock CDNs
+├── infrastructure/    # Pulumi IaC for Route 53, ARC, single origin ALB, and CDN configurations
 ├── control-plane/     # EC2 instances for the Config API behind ALB
 ├── client-app/        # React Web App demonstrating the "Smart Client"
-└── simulation/        # Python scripts to break endpoints and flip switches
+└── simulation/        # Python scripts to break CDN endpoints and flip switches
 
 
 Traffic Flow
 
-**Shared Origin Infrastructure:**
-- **Mock Primary (Cloudflare)**: Simulated via ALB A with EC2 instances at `primary.cloudfront.lab.zzhe.xyz`
-- **Mock Secondary (CloudFront)**: Simulated via ALB B with EC2 instances at `secondary.cloudfront.lab.zzhe.xyz`
+**Single Origin Infrastructure:**
+- **Origin Server**: Single ALB + EC2 instances at `origin.cloudfront.lab.zzhe.xyz`
 
-**Important**: In this lab, both Global and South America regions use the **same origin servers**. The CDNs (Cloudflare and CloudFront) would normally cache content from these shared origins, with geographic routing at the DNS layer determining which CDN edge users connect to.
+**CDN Vendor Setup:**
+- **Cloudflare CDN**: Configured to pull content from `origin.cloudfront.lab.zzhe.xyz` (Primary CDN)
+- **CloudFront CDN**: Configured to pull content from `origin.cloudfront.lab.zzhe.xyz` (Backup CDN)
+
+**Important**: This lab demonstrates **CDN vendor failover**, not origin failover. Both Cloudflare and CloudFront cache content from the same single origin server. Route 53 routes end users to the healthier CDN vendor.
 
 **Control Plane**: A highly available API running on EC2 instances behind ALB that reads the state of our "Emergency Switch" (Route 53 ARC).
 
@@ -406,8 +412,9 @@ pulumi up
 
 Note the outputs:
 - config_api_url: https://api.cloudfront.lab.zzhe.xyz
-- primary_alb_url: https://primary.cloudfront.lab.zzhe.xyz
-- secondary_alb_url: https://secondary.cloudfront.lab.zzhe.xyz
+- origin_server_url: https://origin.cloudfront.lab.zzhe.xyz
+- cloudflare_cname: (provided by Cloudflare setup)
+- cloudfront_distribution: (AWS CloudFront distribution domain)
 
 2. Configure Client
 

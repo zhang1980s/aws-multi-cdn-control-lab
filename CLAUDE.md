@@ -17,10 +17,10 @@ The project implements a dual-layer approach:
 ### Directory Structure
 ```
 aws-multi-cdn-control-lab/
-├── infrastructure/    # Pulumi with Go IaC for Route 53, ARC, ALB, and Mock CDNs
+├── infrastructure/    # Pulumi with Go IaC for Route 53, ARC, single origin ALB, and CDN configurations
 ├── control-plane/     # EC2 instances for the Config API behind ALB
 ├── client-app/        # React Web App demonstrating the "Smart Client"
-└── simulation/        # Python scripts to break endpoints and flip switches
+└── simulation/        # Python scripts to break CDN endpoints and flip switches
 ```
 
 ## Prerequisites
@@ -83,18 +83,20 @@ pulumi destroy
 
 ### Traffic Flow Components
 
-- **Mock Primary CDN**: Simulated via ALB A with EC2 instances running mock Cloudflare service
-- **Mock Secondary CDN**: Simulated via ALB B with EC2 instances running mock CloudFront service
+- **Single Origin Server**: ALB + EC2 instances at `origin.cloudfront.lab.zzhe.xyz` serving the application
+- **Cloudflare CDN**: Primary CDN that pulls content from the origin server
+- **CloudFront CDN**: Secondary CDN that pulls content from the same origin server
 - **Control Plane**: Highly available API running on EC2 instances behind ALB that reads Route 53 ARC state
 - **Client Application**: React web app that fetches configuration and implements smart failover logic
 
 ### Key Infrastructure Components
 
-- **Application Load Balancers (ALB)**: Distribute traffic across EC2 instances for high availability
-- **EC2 Instances**: Host the mock CDN services and control plane API
-- **Route 53**: DNS management and health checks for server-side failover
+- **Origin ALB + EC2**: Single origin server infrastructure hosting the application
+- **Cloudflare Setup**: CDN configuration to pull from origin.cloudfront.lab.zzhe.xyz
+- **CloudFront Distribution**: AWS CDN distribution configured with origin.cloudfront.lab.zzhe.xyz
+- **Route 53**: DNS management and health checks for CDN vendor failover
 - **Route 53 ARC**: Application Recovery Controller for emergency traffic switching
-- **CloudWatch**: Monitoring and alerting for system health
+- **CloudWatch**: Monitoring and alerting for CDN and origin health
 
 ## Notes for Future Development
 
