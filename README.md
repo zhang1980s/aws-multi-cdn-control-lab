@@ -43,7 +43,7 @@ graph TD
     UserSA --> R53_Entry
 
     subgraph DNS["DNS Traffic Flow"]
-        R53_Entry["api.cloudfront.lab.zzhe.xyz"] -->|Default| R53_Global["Layer 2: Global"]
+        R53_Entry["api.cloudfront-ha.lab.zzhe.xyz"] -->|Default| R53_Global["Layer 2: Global"]
         R53_Entry -->|South America| R53_SA["Layer 2: South America"]
 
         R53_Global -->|Primary| CF_Global[Cloudflare CDN]
@@ -54,7 +54,7 @@ graph TD
     end
 
     subgraph Origin["Single Origin Infrastructure"]
-        ALB_Origin["ALB: Origin Server<br/>origin.cloudfront.lab.zzhe.xyz"]
+        ALB_Origin["ALB: Origin Server<br/>origin.cloudfront-ha.lab.zzhe.xyz"]
         EC2_Origin["EC2 Instances<br/>Application Server"]
 
         ALB_Origin --> EC2_Origin
@@ -104,7 +104,7 @@ graph TD
 **Key Concept**: This lab demonstrates **one origin server** with **two CDN vendors** for high availability. Route 53 handles failover between CDN vendors, not between origins.
 
 **How it works:**
-- **Single Origin**: One origin server (ALB + EC2) at `origin.cloudfront.lab.zzhe.xyz`
+- **Single Origin**: One origin server (ALB + EC2) at `origin.cloudfront-ha.lab.zzhe.xyz`
 - **Dual CDN Setup**:
   - **Cloudflare CDN** pulls content from the origin (Primary CDN)
   - **CloudFront CDN** pulls content from the same origin (Backup CDN)
@@ -180,7 +180,7 @@ This phase sets up the two-layer DNS routing structure that enables geographic-b
 ### Step-by-Step DNS Configuration
 
 #### Prerequisites
-- Route 53 hosted zone for `cloudfront.lab.zzhe.xyz`
+- Route 53 hosted zone for `cloudfront-ha.lab.zzhe.xyz`
 - Health checks created from Phase 2: HC-Logic-Global and HC-Logic-SA
 - CDN endpoints ready: Cloudflare and CloudFront configurations
 
@@ -190,23 +190,23 @@ This phase sets up the two-layer DNS routing structure that enables geographic-b
 
 **1.1 Create Global Region Failover Records**
 
-Navigate to Route 53 Console → Hosted Zones → `cloudfront.lab.zzhe.xyz`
+Navigate to Route 53 Console → Hosted Zones → `cloudfront-ha.lab.zzhe.xyz`
 
 **Record 1: Global Primary (Cloudflare CDN)**
-- **Record Name**: `global-rule.cloudfront.lab.zzhe.xyz`
+- **Record Name**: `global-rule.cloudfront-ha.lab.zzhe.xyz`
 - **Record Type**: `CNAME`
 - **Alias**: No
-- **Value**: `your-site.cloudflare.com` (Cloudflare CDN endpoint that pulls from origin.cloudfront.lab.zzhe.xyz)
+- **Value**: `your-site.cloudflare.com` (Cloudflare CDN endpoint that pulls from origin.cloudfront-ha.lab.zzhe.xyz)
 - **Routing Policy**: `Failover`
 - **Failover Type**: `Primary`
 - **Health Check**: Select `HC-Logic-Global` (from Phase 2)
 - **Record ID**: `global-primary`
 
 **Record 2: Global Secondary (CloudFront CDN)**
-- **Record Name**: `global-rule.cloudfront.lab.zzhe.xyz` (same as primary)
+- **Record Name**: `global-rule.cloudfront-ha.lab.zzhe.xyz` (same as primary)
 - **Record Type**: `CNAME`
 - **Alias**: Yes (for CloudFront distribution)
-- **Value**: `d123abc456.cloudfront.net` (CloudFront distribution that pulls from origin.cloudfront.lab.zzhe.xyz)
+- **Value**: `d123abc456.cloudfront.net` (CloudFront distribution that pulls from origin.cloudfront-ha.lab.zzhe.xyz)
 - **Routing Policy**: `Failover`
 - **Failover Type**: `Secondary`
 - **Health Check**: None (secondary doesn't need health check)
@@ -215,7 +215,7 @@ Navigate to Route 53 Console → Hosted Zones → `cloudfront.lab.zzhe.xyz`
 **1.2 Create South America Region Failover Records**
 
 **Record 3: South America Primary (Cloudflare CDN)**
-- **Record Name**: `sa-rule.cloudfront.lab.zzhe.xyz`
+- **Record Name**: `sa-rule.cloudfront-ha.lab.zzhe.xyz`
 - **Record Type**: `CNAME`
 - **Alias**: No
 - **Value**: `your-site.cloudflare.com` (same Cloudflare CDN endpoint)
@@ -225,7 +225,7 @@ Navigate to Route 53 Console → Hosted Zones → `cloudfront.lab.zzhe.xyz`
 - **Record ID**: `sa-primary`
 
 **Record 4: South America Secondary (CloudFront CDN)**
-- **Record Name**: `sa-rule.cloudfront.lab.zzhe.xyz` (same as SA primary)
+- **Record Name**: `sa-rule.cloudfront-ha.lab.zzhe.xyz` (same as SA primary)
 - **Record Type**: `CNAME`
 - **Alias**: Yes (for CloudFront distribution)
 - **Value**: `d123abc456.cloudfront.net` (same CloudFront distribution)
@@ -241,19 +241,19 @@ Navigate to Route 53 Console → Hosted Zones → `cloudfront.lab.zzhe.xyz`
 **2.1 Create the Main API Entry Point**
 
 **Record 5: Default/Global Geographic Rule**
-- **Record Name**: `api.cloudfront.lab.zzhe.xyz`
+- **Record Name**: `api.cloudfront-ha.lab.zzhe.xyz`
 - **Record Type**: `CNAME`
 - **Alias**: No
-- **Value**: `global-rule.cloudfront.lab.zzhe.xyz`
+- **Value**: `global-rule.cloudfront-ha.lab.zzhe.xyz`
 - **Routing Policy**: `Geolocation`
 - **Location**: `Default` (catches all traffic not matching other rules)
 - **Record ID**: `api-default-global`
 
 **Record 6: South America Geographic Rule**
-- **Record Name**: `api.cloudfront.lab.zzhe.xyz` (same as default)
+- **Record Name**: `api.cloudfront-ha.lab.zzhe.xyz` (same as default)
 - **Record Type**: `CNAME`
 - **Alias**: No
-- **Value**: `sa-rule.cloudfront.lab.zzhe.xyz`
+- **Value**: `sa-rule.cloudfront-ha.lab.zzhe.xyz`
 - **Routing Policy**: `Geolocation`
 - **Location**: `South America` (select continent)
 - **Record ID**: `api-sa-specific`
@@ -265,12 +265,12 @@ Navigate to Route 53 Console → Hosted Zones → `cloudfront.lab.zzhe.xyz`
 **3.1 DNS Propagation Check**
 ```bash
 # Test from different geographic locations
-dig api.cloudfront.lab.zzhe.xyz
-nslookup api.cloudfront.lab.zzhe.xyz
+dig api.cloudfront-ha.lab.zzhe.xyz
+nslookup api.cloudfront-ha.lab.zzhe.xyz
 
 # Test specific regional rules directly
-dig global-rule.cloudfront.lab.zzhe.xyz
-dig sa-rule.cloudfront.lab.zzhe.xyz
+dig global-rule.cloudfront-ha.lab.zzhe.xyz
+dig sa-rule.cloudfront-ha.lab.zzhe.xyz
 ```
 
 **3.2 Health Check Verification**
@@ -281,7 +281,7 @@ dig sa-rule.cloudfront.lab.zzhe.xyz
 **3.3 End-to-End Flow Test**
 ```bash
 # Test from Global location (should hit global-rule → Cloudflare)
-curl -I https://api.cloudfront.lab.zzhe.xyz
+curl -I https://api.cloudfront-ha.lab.zzhe.xyz
 
 # Test failover by triggering health check failure
 # (Use simulation scripts from Phase 4)
@@ -295,8 +295,8 @@ curl -I https://api.cloudfront.lab.zzhe.xyz
 If you want more granular control, add specific countries/regions:
 
 ```
-- Europe: europe-rule.cloudfront.lab.zzhe.xyz
-- Asia: asia-rule.cloudfront.lab.zzhe.xyz
+- Europe: europe-rule.cloudfront-ha.lab.zzhe.xyz
+- Asia: asia-rule.cloudfront-ha.lab.zzhe.xyz
 ```
 
 **4.2 Configure TTL Values**
@@ -308,32 +308,32 @@ If you want more granular control, add specific countries/regions:
 **4.3 Add Monitoring**
 ```bash
 # Set up CloudWatch monitoring for DNS queries
-aws logs create-log-group --log-group-name "/aws/route53/api.cloudfront.lab.zzhe.xyz"
+aws logs create-log-group --log-group-name "/aws/route53/api.cloudfront-ha.lab.zzhe.xyz"
 ```
 
 ---
 
 #### **Step 5: Configuration Validation Checklist**
 
-- [ ] Layer 2 Global failover: `global-rule.cloudfront.lab.zzhe.xyz` created
-- [ ] Layer 2 SA failover: `sa-rule.cloudfront.lab.zzhe.xyz` created
-- [ ] Layer 1 default route: `api.cloudfront.lab.zzhe.xyz` → `global-rule`
-- [ ] Layer 1 SA route: `api.cloudfront.lab.zzhe.xyz` → `sa-rule`
+- [ ] Layer 2 Global failover: `global-rule.cloudfront-ha.lab.zzhe.xyz` created
+- [ ] Layer 2 SA failover: `sa-rule.cloudfront-ha.lab.zzhe.xyz` created
+- [ ] Layer 1 default route: `api.cloudfront-ha.lab.zzhe.xyz` → `global-rule`
+- [ ] Layer 1 SA route: `api.cloudfront-ha.lab.zzhe.xyz` → `sa-rule`
 - [ ] Health checks attached to primary records only
 - [ ] DNS propagation completed (24-48 hours max)
 - [ ] End-to-end testing successful from multiple geographic locations
 
 **Final DNS Structure:**
 ```
-api.cloudfront.lab.zzhe.xyz (Entry Point)
-├── Default Location → global-rule.cloudfront.lab.zzhe.xyz
+api.cloudfront-ha.lab.zzhe.xyz (Entry Point)
+├── Default Location → global-rule.cloudfront-ha.lab.zzhe.xyz
 │   ├── Primary → your-site.cloudflare.com (with HC-Logic-Global)
 │   └── Secondary → d123abc456.cloudfront.net
-└── South America → sa-rule.cloudfront.lab.zzhe.xyz
+└── South America → sa-rule.cloudfront-ha.lab.zzhe.xyz
     ├── Primary → your-site.cloudflare.com (with HC-Logic-SA)
     └── Secondary → d123abc456.cloudfront.net
 
-Single Origin: origin.cloudfront.lab.zzhe.xyz
+Single Origin: origin.cloudfront-ha.lab.zzhe.xyz
 ├── Cloudflare CDN pulls from origin
 └── CloudFront CDN pulls from origin
 ```
@@ -367,11 +367,11 @@ aws-multi-cdn-control-lab/
 Traffic Flow
 
 **Single Origin Infrastructure:**
-- **Origin Server**: Single ALB + EC2 instances at `origin.cloudfront.lab.zzhe.xyz`
+- **Origin Server**: Single ALB + EC2 instances at `origin.cloudfront-ha.lab.zzhe.xyz`
 
 **CDN Vendor Setup:**
-- **Cloudflare CDN**: Configured to pull content from `origin.cloudfront.lab.zzhe.xyz` (Primary CDN)
-- **CloudFront CDN**: Configured to pull content from `origin.cloudfront.lab.zzhe.xyz` (Backup CDN)
+- **Cloudflare CDN**: Configured to pull content from `origin.cloudfront-ha.lab.zzhe.xyz` (Primary CDN)
+- **CloudFront CDN**: Configured to pull content from `origin.cloudfront-ha.lab.zzhe.xyz` (Backup CDN)
 
 **Important**: This lab demonstrates **CDN vendor failover**, not origin failover. Both Cloudflare and CloudFront cache content from the same single origin server. Route 53 routes end users to the healthier CDN vendor.
 
@@ -399,11 +399,11 @@ Node.js v16+ (for the client)
 
 Python 3.9+ (for simulation scripts)
 
-Domain: Access to zzhe.xyz domain for creating lab subdomains (*.cloudfront.lab.zzhe.xyz)
+Domain: Access to zzhe.xyz domain for creating lab subdomains (*.cloudfront-ha.lab.zzhe.xyz)
 
 1. Deploy Infrastructure
 
-Provision the ALB endpoints, EC2 instances, Route 53 zones, and Health Checks with cloudfront.lab.zzhe.xyz subdomains.
+Provision the ALB endpoints, EC2 instances, Route 53 zones, and Health Checks with cloudfront-ha.lab.zzhe.xyz subdomains.
 
 cd infrastructure
 pulumi stack init
@@ -411,8 +411,8 @@ pulumi up
 
 
 Note the outputs:
-- config_api_url: https://api.cloudfront.lab.zzhe.xyz
-- origin_server_url: https://origin.cloudfront.lab.zzhe.xyz
+- config_api_url: https://api.cloudfront-ha.lab.zzhe.xyz
+- origin_server_url: https://origin.cloudfront-ha.lab.zzhe.xyz
 - cloudflare_cname: (provided by Cloudflare setup)
 - cloudfront_distribution: (AWS CloudFront distribution domain)
 

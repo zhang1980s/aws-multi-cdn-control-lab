@@ -30,7 +30,7 @@ aws-multi-cdn-control-lab/
 - Go 1.19+ (for infrastructure code)
 - Node.js v16+ (for the client)
 - Python 3.9+ (for simulation scripts)
-- Domain: Access to zzhe.xyz domain for creating lab subdomains (*.cloudfront.lab.zzhe.xyz)
+- Domain: Access to zzhe.xyz domain for creating lab subdomains (*.cloudfront-ha.lab.zzhe.xyz)
 
 ## Common Commands
 
@@ -44,7 +44,7 @@ pulumi up
 ### Client Application
 ```bash
 cd client-app
-# Edit .env or src/config.ts with the cloudfront.lab.zzhe.xyz URLs from Pulumi output
+# Edit .env or src/config.ts with the cloudfront-ha.lab.zzhe.xyz URLs from Pulumi output
 npm install
 npm run dev
 ```
@@ -66,7 +66,7 @@ pulumi destroy
 
 ## Development Workflow
 
-1. Deploy infrastructure first to get the ALB URLs (*.cloudfront.lab.zzhe.xyz)
+1. Deploy infrastructure first to get the ALB URLs (*.cloudfront-ha.lab.zzhe.xyz)
 2. Configure layered DNS records using the detailed step-by-step guide in README.md (Phase 3)
 3. Configure the client app with the URLs from Pulumi output
 4. Start the client application
@@ -83,7 +83,7 @@ pulumi destroy
 
 ### Traffic Flow Components
 
-- **Single Origin Server**: ALB + EC2 instances at `origin.cloudfront.lab.zzhe.xyz` serving the application
+- **Single Origin Server**: ALB + EC2 instances at `origin.cloudfront-ha.lab.zzhe.xyz` serving the application
 - **Cloudflare CDN**: Primary CDN that pulls content from the origin server
 - **CloudFront CDN**: Secondary CDN that pulls content from the same origin server
 - **Control Plane**: Highly available API running on EC2 instances behind ALB that reads Route 53 ARC state
@@ -92,8 +92,8 @@ pulumi destroy
 ### Key Infrastructure Components
 
 - **Origin ALB + EC2**: Single origin server infrastructure hosting the application
-- **Cloudflare Setup**: CDN configuration to pull from origin.cloudfront.lab.zzhe.xyz
-- **CloudFront Distribution**: AWS CDN distribution configured with origin.cloudfront.lab.zzhe.xyz
+- **Cloudflare Setup**: CDN configuration to pull from origin.cloudfront-ha.lab.zzhe.xyz
+- **CloudFront Distribution**: AWS CDN distribution configured with origin.cloudfront-ha.lab.zzhe.xyz
 - **Route 53**: DNS management and health checks for CDN vendor failover
 - **Route 53 ARC**: Application Recovery Controller for emergency traffic switching
 - **CloudWatch**: Monitoring and alerting for CDN and origin health
